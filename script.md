@@ -1,28 +1,22 @@
 # Script - "Cilium Network Policy Anti-Patterns I Learned the Hard Way"
 
-Full script, slide by slide. Plain paragraphs are what to *say*. Boxed `> Extra:` callouts are knowledge that didn't fit on the slide but is worth keeping in your back pocket for Q&A - don't feel obligated to say these out loud unless someone asks or you have time to spare.
-
----
-
 ## Slide 1 - Title
 
-(Yours - intro yourself, the talk title is already on screen.)
+I everyone, thank you for joining this session, Let me first start with introducing myself.
 
 ## Slide 2 - About Myself
 
-(Yours.)
+my name is Shubham, I am an Site Reliability Engineer at Obmondo, I am a Certified Kubernetes Administrator and have been contributing to various CNCF Projects since  - I also help maintain project KubeAid and KubeAid CLI - which is a ---
+
+So lets get started.
 
 ---
 
 ## Slide 3 - Agenda
 
-"Quick roadmap: I'll spend a minute on what Cilium actually is, a minute on why we chose CiliumNetworkPolicy over the vanilla Kubernetes NetworkPolicy, and then the bulk of the talk - thirteen anti-patterns I either wrote myself or watched a teammate write, each with the wrong version, the fix, and the *why*. I'll close with how we actually debug a policy drop with Hubble, and a checklist you can steal on your way out."
-
----
-
 ## Slide 4 - What is Cilium?
 
-"Cilium is an eBPF-based networking, observability, and security layer for Kubernetes. Instead of kube-proxy and iptables rules, it programs the kernel directly with eBPF - so service routing and policy enforcement happen in-kernel, not as a chain of iptables rules being walked packet by packet.
+So I would assume most of us here know what Cilium is, for those who havent heard of cilium - It is an eBPF-based networking, observability, and security layer for Kubernetes. Instead of kube-proxy and iptables rules, it programs the kernel directly with eBPF - so service routing and policy enforcement happen in-kernel, not as a chain of iptables rules being walked packet by packet.
 
 The part that matters most for this talk: Cilium's security model is *identity-based*, not IP-based. A policy is written against pod labels - a set of labels resolves to a numeric security identity, and policy is enforced between identities, not IPs. That single design choice is the root cause of most of the anti-patterns coming up.
 
