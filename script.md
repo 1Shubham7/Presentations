@@ -16,23 +16,29 @@ So lets get started.
 
 ## Slide 4 - What is Cilium?
 
-So I would assume most of us here know what Cilium is, for those who havent heard of cilium - It is an eBPF-based networking, observability, and security layer for Kubernetes. Instead of kube-proxy and iptables rules, it programs the kernel directly with eBPF - so service routing and policy enforcement happen in-kernel, not as a chain of iptables rules being walked packet by packet.
+So I would assume most of us here know what Cilium is, for those who havent heard of cilium - It is an eBPF-based networking, observability, and security layer for Kubernetes. It replaces traditional iptables-based CNI + kube-proxy approach with an eBPF datapath.
 
-The part that matters most for this talk: Cilium's security model is *identity-based*, not IP-based. A policy is written against pod labels - a set of labels resolves to a numeric security identity, and policy is enforced between identities, not IPs. That single design choice is the root cause of most of the anti-patterns coming up.
+Since its based on eBPF - programs run directly in the Linux kernel on every packet, replacing linear iptables rule chains with O(1) hash lookups.
 
-It also ships Hubble for flow-level observability, and CiliumNetworkPolicy - CNP - as a superset of the native NetworkPolicy API with L7 awareness (HTTP, gRPC, Kafka), DNS-aware rules, and explicit entities like `kube-apiserver` and `world`."
+It has Identity-Based Network Security - so policies are enforced on workload identity.
 
-> Extra: internally, every unique *set* of identity-relevant labels gets a numeric Security Identity. Cilium deliberately excludes certain high-cardinality label patterns (like `statefulset.kubernetes.io/pod-name`) from that calculation - that list is what causes Anti-Pattern 4 later.
+and because it is inspecting every packet at the kernel level to route and secure it, it gives us a lot of visibility on those packets and then you can use Hubble to export those flow data as logs, metrics, and a UI, without any extra instrumentation.
 
 ---
 
 ## Slide 5 - Why CiliumNetworkPolicy?
 
-"We centralize operator configs and NetworkPolicies for multiple teams across multiple clusters - that's KubeAid Addons. The practical consequence: one wrong pattern doesn't cost one team a bad afternoon, it gets copy-pasted into every cluster we manage.
+So why would you want to  use CiliumNetworkPolicy instead of native Kubernetes NetworkPolicy? A few real reasons.
 
-Native NetworkPolicy can only *allow* - there's no explicit deny, no priority, and no DNS or L7 awareness. CNP gives us explicit deny, `toFQDNs`, `toServices`, `toEntities`, and both namespace-scoped and cluster-wide policies (CNP vs CCNP) so we're not duplicating the same rule per namespace.
+- native NetworkPolicy is L3/L4 only, IPs and ports. CiliumNetworkPolicy gives you security at application layer L7 as well - so you can select which actual HTTP methods to allow or reject, and which which path to allow or reject.
 
-The tradeoff: because enforcement is in-kernel via eBPF, the failure modes look genuinely different from what you're used to with iptables. That's basically the rest of this talk."
+- you can also apply CiliumClusterwideNetworkPolicy to define baseline policies across the whole cluster, native netpols aer ns scoped. even cilium netpols are ns scoped but there is a separate CR for cluster wide policies.
+
+- Native netpols has no concept of hostnames at all — CIDR only. CNP can allow egress by domain name, dynamically resolved.
+
+- native netpols has no concept of an explicit deny. We can do that with cilium netpols. and in that case - deny always wins over allow in this case.
+
+, even across different policies. That means you can write one broad allow rule for the common case, and a separate targeted deny rule to carve out an exception — instead of rewriting the whole allow rule every time. Third, CNP gives you named entities — world, host, the API server — instead of hardcoding CIDR ranges. And DNS-based egress rules, so you can allow traffic by domain name instead of chasing IPs."
 
 ---
 
