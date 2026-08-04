@@ -38,13 +38,9 @@ So why would you want to  use CiliumNetworkPolicy instead of native Kubernetes N
 
 - native netpols has no concept of an explicit deny. We can do that with cilium netpols. and in that case - deny always wins over allow in this case.
 
----
-
 ## Slide 6 - Section divider
 
-"Thirteen mistakes. Wrong versus correct, every time - let's go."
-
----
+Now lets move towards the antipatterns
 
 ## Slide 7 - Anti-Pattern 1: Forgetting Namespace Scoping
 
