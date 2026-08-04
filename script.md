@@ -38,8 +38,6 @@ So why would you want to  use CiliumNetworkPolicy instead of native Kubernetes N
 
 - native netpols has no concept of an explicit deny. We can do that with cilium netpols. and in that case - deny always wins over allow in this case.
 
-, even across different policies. That means you can write one broad allow rule for the common case, and a separate targeted deny rule to carve out an exception — instead of rewriting the whole allow rule every time. Third, CNP gives you named entities — world, host, the API server — instead of hardcoding CIDR ranges. And DNS-based egress rules, so you can allow traffic by domain name instead of chasing IPs."
-
 ---
 
 ## Slide 6 - Section divider
