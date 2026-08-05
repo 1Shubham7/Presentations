@@ -44,7 +44,7 @@ So why would you want to  use CiliumNetworkPolicy instead of native Kubernetes N
 
 Now lets move towards the antipatterns
 
-## Slide 7 - Anti-Pattern 1: toServices vs toEndpoints
+### Anti-Pattern 1: toServices vs toEndpoints
 
 If you are using toServices as selector - the port number must match targetPort, not the Service's exposed port. which is a bit confusing but After 
 DNAT, the packet's destination port becomes the Pod's actuall port. If you use Service's exposed port - it will silently never matches.
@@ -59,33 +59,15 @@ DNAT, the packet's destination port becomes the Pod's actuall port. If you use S
   
 - If the pod b also has ingress policy, that Pod B side gets checked too
 
+### Anti Pattern 2: 
+
 Also you should always prefer toEndpoints on a stable label - then you can sidestep from all of these edge cases, and also that survives Helm templated Service names changing across releases.
 
-## Slide 9 - Anti-Pattern 3: Hardcoding kube-apiserver's ClusterIP
+### Anti Pattern 3: Unique-per-Pod Labels
 
-"Classic timeout-during-an-incident story: a pod needs to talk to the Kubernetes API server, someone hardcodes `toCIDR: 10.96.0.1/32` because that's the apiserver's ClusterIP they saw in `kubectl get svc -n default kubernetes`. Works in dev. Times out somewhere else - because that cluster reaches the apiserver through an external load balancer on `:6443`, not the in-cluster Service IP at all.
+Cilium ignores "unique per Pod" or "unique per deployment revision" labels for identity - so while using selectors - dont use such labels. Cilium maintains this list of label patterns excluded from identity computation - this done to prevent every single Pod from getting its own unique identity - for eg. if there are 2 pods in a deployment - and cilium were to consider unique per pod labels nw if we allow ingress to that deployment - the label we use in "toEndpoints matchLabels" may match will one pod but not with another - which would defeat the purpose of identity-based policy grouping. If you write a CiliumNetworkPolicy selector against one of these excluded labels, it silently matches nothing. you can scan this QR to checkout the list of excluded labels. and you can also configure your cilium to append labels to it for your specific cluster.
 
-`toEntities: [kube-apiserver]` is the fix - it's a special entity Cilium resolves dynamically to wherever the apiserver is actually reachable from, so you stop guessing IP and port entirely."
-
-> Extra - when do pods even need this? kube-apiserver is the source of truth for everything - secrets, configmaps, CRDs, pod status. But if your pod only *consumes* Kubernetes resources passively - mounted ConfigMaps/Secrets, env vars from a Secret - it never talks to the apiserver directly. Kubelet does that on the pod's behalf and writes the result to the node's filesystem or injects it at pod start. You only need `kube-apiserver` egress when a process **inside** the pod is making live API calls at runtime - client-go, kubectl, an SDK doing GET/WATCH/PATCH. Good context if someone asks "how do I even know if I need this rule."
->
-> Extra: the other built-in entities worth knowing - `world` (everything outside the cluster), `host` (the local node), `remote-node` (other cluster nodes), `cluster` (all cluster entities). `world` is what Anti-Pattern 10 (LoadBalancer traffic) needs.
-
----
-
-## Slide 10 - Anti-Pattern 4: Selecting on Unique-per-Pod Labels
-
-"This one is sneaky because it looks totally reasonable: select a specific StatefulSet pod by `statefulset.kubernetes.io/pod-name: oncall-pgsql-1`. Except Cilium maintains an internal list of label patterns it deliberately **excludes** from identity calculation - specifically to avoid identity explosion, because if every pod got its own identity, you'd lose the whole point of identity-based policy grouping. Pod-name-style labels are on that exclusion list.
-
-Practical effect: the endpoint literally never carries that label as part of its security identity, so a selector built around it matches nothing - forever, silently.
-
-Fix: select on a label that's shared across all replicas of the thing you actually care about - `cnpg.io/cluster: oncall-pgsql` plus the namespace - one stable identity for the whole set."
-
-> Extra: the exact exclusion list lives in Cilium's docs under "Limiting Identity-Relevant Labels" - worth linking if someone wants the authoritative list rather than trial-and-error.
-
----
-
-## Slide 11 - Anti-Pattern 5: toFQDNs Without a DNS Proxy Rule
+## toFQDNs Without a DNS Proxy Rule
 
 "This is the one that burned the most debugging hours for us, because it doesn't fail consistently - it fails *intermittently*, which is the worst kind of bug.
 
