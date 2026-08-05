@@ -38,33 +38,15 @@ So why would you want to  use CiliumNetworkPolicy instead of native Kubernetes N
 
 - native netpols has no concept of an explicit deny. We can do that with cilium netpols. and in that case - deny always wins over allow in this case.
 
+- Native netpols can only reference Pods/namespaces via selectors, or raw CIDR blocks. cilium netpols also have predefined identities - like world, host, cluster, kube-apiserver, remote-node.
+
 ## Slide 6 - Section divider
 
 Now lets move towards the antipatterns
 
-## Slide 7 - Anti-Pattern 1: Forgetting Namespace Scoping
+## Slide 7 - Anti-Pattern 1: toServices vs toEndpoints
 
-"CiliumNetworkPolicy resources are namespace-scoped by their own `metadata.namespace` - but that's just where the *policy object* lives. Every selector inside it - `endpointSelector`, `fromEndpoints`, `toEndpoints` - matches on **labels only**. There is no implicit 'stay within my namespace' behavior.
 
-So here: a policy in `test-oncall` tries to allow traffic from `cloudnative-pg` pods by label - but those pods actually live in the `cloudnative-pg` namespace. No namespace label on the selector means it silently matches nothing. No error, no warning - traffic just gets denied and you're left wondering why.
-
-Fix: always add the namespace label explicitly - `k8s:io.kubernetes.pod.namespace: cloudnative-pg` - alongside the app label."
-
-> Extra: the `k8s:` prefix itself is actually **optional**. Cilium labels carry a source prefix internally (`k8s:`, `container:`, etc.), and if you omit the prefix in your selector it defaults to `any:`, which matches labels from any source. So `io.kubernetes.pod.namespace: traefik` and `k8s:io.kubernetes.pod.namespace: traefik` behave identically in almost every real cluster. You only need the explicit prefix if you need to disambiguate label sources. Good one to know if someone in the audience asks "wait, do I need that k8s: prefix?"
->
-> Extra: you can see exactly how Cilium stored a pod's labels with `kubectl get cep -n <namespace> <pod-name> -o jsonpath='{.status.identity.labels}' | jq` - `cep` = CiliumEndpoint. Great live-debugging move if you want to demo this.
-
----
-
-## Slide 8 - Anti-Pattern 2: toServices Instead of toEndpoints
-
-"`toServices` looks like the obviously-correct way to say 'let this pod talk to my database service.' It isn't, for pod-to-pod traffic.
-
-`toServices` only authorizes traffic to the Service's ClusterIP. But by the time that packet is actually delivered, kube-proxy or Cilium's own eBPF datapath has already DNAT'd it straight to a backend pod IP - and policy enforcement happens *after* that translation, against the pod's identity, not the Service's. So the rule that looks like it should work, doesn't.
-
-`toEndpoints`, selecting on the backend pod's labels directly, is what we settled on and recommend by default - it matches the real destination identity, and it also survives a Helm release name changing, since we're selecting on a stable label like `cnpg.io/cluster`, not a name that's templated per release."
-
----
 
 ## Slide 9 - Anti-Pattern 3: Hardcoding kube-apiserver's ClusterIP
 
