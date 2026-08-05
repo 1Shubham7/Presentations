@@ -46,7 +46,20 @@ Now lets move towards the antipatterns
 
 ## Slide 7 - Anti-Pattern 1: toServices vs toEndpoints
 
+If you are using toServices as selector - the port number must match targetPort, not the Service's exposed port. which is a bit confusing but After 
+DNAT, the packet's destination port becomes the Pod's actuall port. If you use Service's exposed port - it will silently never matches.
 
+- What actually happens is that Pod A sends a request to the Service's ClusterIP, on service's port since thats the only address it knows. it doesnt know about the pod B's IP or port.
+
+- eBPF intercepts this at Pod A's veth - eBPF program looks up the Service in the service map, picks Pod B, and rewrites the packet: destination IP becomes Pod B's real IP, and destination port becomes pod B's port.
+
+- eBPF resolves identities - Pod A's IP → Pod A's identity, Pod B's IP → Pod B's identity.
+
+- then it does policy map lookup: (Pod A identity → Pod B identity, port 80, TCP). if the toPorts is correctly written then it matches and the packet proceeds to Pod B.
+  
+- If the pod b also has ingress policy, that Pod B side gets checked too
+
+Also you should always prefer toEndpoints on a stable label - then you can sidestep from all of these edge cases, and also that survives Helm templated Service names changing across releases.
 
 ## Slide 9 - Anti-Pattern 3: Hardcoding kube-apiserver's ClusterIP
 
