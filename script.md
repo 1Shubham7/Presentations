@@ -67,19 +67,21 @@ Also you should always prefer toEndpoints on a stable label - then you can sides
 
 Cilium ignores "unique per Pod" or "unique per deployment revision" labels for identity - so while using selectors - dont use such labels. Cilium maintains this list of label patterns excluded from identity computation - this done to prevent every single Pod from getting its own unique identity - for eg. if there are 2 pods in a deployment - and cilium were to consider unique per pod labels nw if we allow ingress to that deployment - the label we use in "toEndpoints matchLabels" may match will one pod but not with another - which would defeat the purpose of identity-based policy grouping. If you write a CiliumNetworkPolicy selector against one of these excluded labels, it silently matches nothing. you can scan this QR to checkout the list of excluded labels. and you can also configure your cilium to append labels to it for your specific cluster.
 
-## toFQDNs Without a DNS Proxy Rule
+## 4: toFQDNs Without a DNS Proxy Rule (wip)
 
-"This is the one that burned the most debugging hours for us, because it doesn't fail consistently - it fails *intermittently*, which is the worst kind of bug.
+client-1 wants to visit api.telegram.org. First step, always: it has to do a DNS lookup — ask "what IP is api.telegram.org?"
+This DNS lookup is itself just network traffic — a request going out on port 53, to CoreDNS.
+Before this traffic leaves client-1's veth, eBPF checks: does any policy that selects client-1 have a rules.dns block covering this traffic? In our correct case — yes, it does.
+Because that check passed, eBPF redirects this specific DNS query into Cilium's DNS proxy (instead of just letting it go straight to CoreDNS untouched).
+The DNS proxy forwards the query to CoreDNS, gets the real answer back (api.telegram.org = 1.2.3.4), and — because it's sitting in the middle of this conversation — it sees this answer.
+The DNS proxy records this: 1.2.3.4 is api.telegram.org, and updates a shared table Cilium keeps for the whole node/cluster (we'll call this "the big lookup table" for now — more on it in a second).
+client-1 receives the DNS answer normally, now tries to actually connect to 1.2.3.4.
+eBPF checks the policy: client-1 has a toFQDNs: api.telegram.org rule. Cilium checks the big lookup table: "is 1.2.3.4 labeled as api.telegram.org?" — yes, because step 6 just wrote that in.
+Allowed. Connection proceeds.
 
-Here's the actual mechanism: when your pod does a DNS lookup, Cilium's eBPF checks - does *this specific pod's own policy* have a `rules.dns` block? If yes, the DNS proxy activates for that endpoint, intercepts the DNS response, and records the IP-to-FQDN mapping in that pod's own FQDN cache. If no - the DNS query and response still go through fine, but Cilium never learns that this particular IP belongs to `api.telegram.org`. Nothing in that pod's cache gets updated.
+Watching a DNS lookup (so Cilium learns the IP) only happens for a Pod if that Pod's own policy has the DNS rule. But once any Pod's lookup gets watched and written to the shared table, any other Pod can benefit from that entry — until it expires. That's why a missing rules.dns block doesn't fail every time — it fails only when nobody else happened to refresh that entry recently.
 
-Then later, when the pod's traffic actually hits the `toFQDNs` rule, Cilium checks its cache for that pod: 'is this destination IP associated with the FQDN I'm allowed to reach?' If the cache is empty or expired - blocked. If it happens to have a cached mapping - maybe from a lucky global-cache hit from another pod - allowed. Same policy, same traffic, different outcome depending on cache state. That's why it looks flaky instead of just broken.
-
-Critical detail: DNS proxy activation is strictly per-endpoint. Having a DNS rule in some other policy - like your cluster's default-deny policy - does **not** activate the proxy for this pod. Every policy that uses `toFQDNs` needs to ship its own `rules.dns` block for the pods it selects."
-
----
-
-## Slide 12 - Anti-Pattern 6: Default-Deny Surprises
+## Anti-Pattern 5: Default-Deny Surprises
 
 "The mental model most people bring from native NetworkPolicy is 'I'm only ever adding allow rules, nothing gets more restrictive.' Cilium breaks that assumption on day one: the very first CiliumNetworkPolicy that selects a given pod flips that pod's enforcement mode from 'never' to 'always' - for *both* directions, not just the one you were thinking about.
 
@@ -89,15 +91,20 @@ The fix is really a sequencing discipline: treat default-deny as day-one design,
 
 ---
 
-## Slide 13 - Anti-Pattern 7: Hardcoded Namespaces & Domains
+## Anti-Pattern 6: Hardcoded Namespaces & Domains
 
-"This is specifically a scaling problem for us, because we don't write one CiliumNetworkPolicy - we ship these as centralized Helm-based addons across every cluster and every team we support. A hardcoded namespace like `prod`, or a hardcoded FQDN like `api.telegram.org` baked directly into the YAML, means the moment that changes anywhere downstream, someone is hand-editing every copy of that chart across every cluster instead of changing one line in `values.yaml`.
+when you apply  a CiliumNetworkPolicy that selects a Pod and you havent added any policy denying traffic - it automatically converts it to default deny, unless explicitly allowed. this happens per direction - ingress and egress - independently.
 
-The fix is boring but non-negotiable at our scale: template it. `{{ .Release.Namespace }}` for namespace, `{{ .Values.cnp.external.fqdns.telegram }}` for external domains, with the actual value living in `values.yaml`. One place to change, everywhere picks it up."
+So never start with writing netpols for an app and just enforcing them, follow this step by step process - this always works
 
----
+1. write a default deny policy that blocks everything in that ns, you can use NotIn operator to ignore applications if you have multiple apps running in one ns and you only want to write netpols for one app. allow DNS egress in same netpol
+2. check if your app has probes - if yes - allow kubelet ingress
+3. check if your app needs to talk to kube-api server - to query or watch live cluster state - if yes - then allow egress to kube-apiserver
+4. If you're firewalling a resource managed by a controller or operator, check whether the operator talks directly to the workload Pod itself (not just to the Kubernetes API about it). If yes, allow ingress from the operator.
+5. then roll out in audit mode and enforce the policies.
+6. now go check your hubble it will show you what all communication your app does - and then using that write a proper netpol.
 
-## Slide 14 - Anti-Pattern 8: toServices + toPorts, and Silent L7 No-ops
+## Anti-Pattern 7: toServices + toPorts, and Silent L7 No-ops
 
 "Two separate landmines bundled into one slide because they're both 'the policy does less than it appears to, with no error telling you so.'
 
