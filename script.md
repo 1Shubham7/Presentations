@@ -81,17 +81,7 @@ Allowed. Connection proceeds.
 
 Watching a DNS lookup (so Cilium learns the IP) only happens for a Pod if that Pod's own policy has the DNS rule. But once any Pod's lookup gets watched and written to the shared table, any other Pod can benefit from that entry — until it expires. That's why a missing rules.dns block doesn't fail every time — it fails only when nobody else happened to refresh that entry recently.
 
-## Anti-Pattern 5: Default-Deny Surprises
-
-"The mental model most people bring from native NetworkPolicy is 'I'm only ever adding allow rules, nothing gets more restrictive.' Cilium breaks that assumption on day one: the very first CiliumNetworkPolicy that selects a given pod flips that pod's enforcement mode from 'never' to 'always' - for *both* directions, not just the one you were thinking about.
-
-So a team ships a policy that's only trying to lock down egress to a database, and suddenly DNS breaks, kubelet health-check probes get dropped, the pod starts restarting - and none of that was explicitly denied by anything. It's an emergent side effect of enforcement mode flipping on.
-
-The fix is really a sequencing discipline: treat default-deny as day-one design, not something you back into. Allow DNS egress with its DNS rule, allow kubelet's health-check probes, allow kube-apiserver where it's actually needed, *then* layer in your app-specific rules - and roll the whole thing out in audit/monitor mode first so you see what would have been dropped before you commit to enforcing it."
-
----
-
-## Anti-Pattern 6: Hardcoded Namespaces & Domains
+### Anti-Pattern 5: Default-Deny Surprises
 
 when you apply  a CiliumNetworkPolicy that selects a Pod and you havent added any policy denying traffic - it automatically converts it to default deny, unless explicitly allowed. this happens per direction - ingress and egress - independently.
 
@@ -104,37 +94,29 @@ So never start with writing netpols for an app and just enforcing them, follow t
 5. then roll out in audit mode and enforce the policies.
 6. now go check your hubble it will show you what all communication your app does - and then using that write a proper netpol.
 
-## Anti-Pattern 7: toServices + toPorts, and Silent L7 No-ops
+### Anti pattern 6: lb
 
-"Two separate landmines bundled into one slide because they're both 'the policy does less than it appears to, with no error telling you so.'
+If your pod is internet facing via a LoadBalancer - that doesn't mean traffic hitting it is already authorized since its a internet facing service or your loadbalancer service's DNAT will take care of it.
 
-First: combining `toServices` with `toPorts` in the same rule isn't supported by Cilium - it produces confusing egress denies that look like a normal policy misconfiguration but are actually just an unsupported field combination.
-
-Second, and this one's sneakier: if you write L7 rules - HTTP methods, Kafka topics, whatever - but the L7 proxy isn't actually enabled cluster-wide, Cilium doesn't error out. It just silently falls back to enforcing L3/L4 only. Your policy YAML says 'only allow GET requests to this path' and what you actually get is 'allow all traffic on this port.' You won't find that out from a `kubectl apply` - you find it out from a security review, or worse.
-
-Takeaway: verify the L7 proxy is actually enabled cluster-wide *before* you rely on any http/gRPC/Kafka rule doing what it says."
+Traffic arrives from outside of cluster - gets DNAT'd by the loadbalancer Service to the Pod's IP. policy engine sits at the pod's veth so which it checks for policy for the packets, the Service is already out of the picture - all policy sees is an identity - that packter is coming from outside world to pod's IP.
+Since the policy didne explicitly allow traffic from outside cluster - it blocks the traffic. so you will have to add a to a `fromEntities: [world]` explicitly in such cases. 
 
 ---
 
-## Slide 15 - Anti-Pattern 9: Datapath Mode Mismatch Across Environments
+### Anti-Pattern 6: Hardcoded Namespaces & Domains
 
-"This one's not a YAML mistake at all - it's an environment-parity mistake that *looks* like a policy bug.
+when you apply  a CiliumNetworkPolicy that selects a Pod and you havent added any policy denying traffic - it automatically converts it to default deny, unless explicitly allowed. this happens per direction - ingress and egress - independently.
 
-We run staging on VXLAN tunnel mode - Cilium's default - and production on native routing with BGP peering. The policy YAML is byte-for-byte identical between the two. But MTU headroom, how encryption interacts with the datapath, even what your troubleshooting signal looks like - all of that differs by datapath mode. So you get the classic 'works in staging, breaks in prod' bug report, someone spends an hour re-reading the policy line by line, and the policy was never the problem.
+So never start with writing netpols for an app and just enforcing them, follow this step by step process - this always works
 
-If you can, keep datapath mode identical across environments and pin it explicitly rather than relying on the default. If you can't - for cost or infra reasons - document the difference and test encryption/MTU behavior for each mode deliberately, before you're debugging it live during an incident."
+1. write a default deny policy that blocks everything in that ns, you can use NotIn operator to ignore applications if you have multiple apps running in one ns and you only want to write netpols for one app. allow DNS egress in same netpol
+2. check if your app has probes - if yes - allow kubelet ingress
+3. check if your app needs to talk to kube-api server - to query or watch live cluster state - if yes - then allow egress to kube-apiserver
+4. If you're firewalling a resource managed by a controller or operator, check whether the operator talks directly to the workload Pod itself (not just to the Kubernetes API about it). If yes, allow ingress from the operator.
+5. then roll out in audit mode and enforce the policies.
+6. now go check your hubble it will show you what all communication your app does - and then using that write a proper netpol.
 
----
-
-## Slide 16 - Anti-Pattern 10: Assuming LoadBalancer Traffic Is Pre-Authorized
-
-"Mental shortcut that trips people up: 'this traffic came in through our internet-facing LoadBalancer Service, so it's already been through some kind of gate - it must be fine.' It hasn't been through a gate. It's been through Service load-balancing, which is a completely separate step from policy enforcement.
-
-A packet can pass Service DNAT successfully and still get dropped immediately afterward by policy - because the policy engine only ever evaluates *world → Pod* identity. It doesn't know, and doesn't care, that the traffic happened to arrive via an internet-facing Service versus, say, a random IP hitting a NodePort directly. If you want that path to work, you need an explicit `fromEntities: [world]` (or a scoped `fromCIDR`) - passing through the LB doesn't grant anything on its own."
-
----
-
-## Slide 17 - Anti-Pattern 11: Expecting Instant Enforcement on Label Changes
+### Anti Pattern 7 - Expecting Instant Enforcement on Label Changes
 
 "Incident-response instinct: relabel a compromised or misbehaving pod - say, slap `role: quarantined` on it - expecting that to immediately sever its existing connections to sensitive backends. That's not guaranteed.
 
@@ -142,29 +124,11 @@ Changing a pod's labels recomputes its Cilium identity, and that does trigger th
 
 Practical incident-response takeaway: if you need a hard, immediate cut, don't rely on a relabel alone - kill the pod or the connection directly."
 
----
+### Anti-Pattern 8: Death by a Thousand NetPols
 
-## Slide 18 - Anti-Pattern 12: "Services Aren't Identities" - Don't Select on a ClusterIP
 
-"This is really the conceptual root underneath Anti-Pattern 2, stated on its own because it's worth internalizing as a mental model, not just a specific gotcha.
 
-DNAT resolves a Service IP to a real backend Pod IP *before* the identity/policy check ever happens. Cilium's policy engine never actually evaluates traffic against a Service - only against post-DNAT Pod identity, or `world`. So if you hardcode a Service's ClusterIP into a `toCIDR` rule, it'll work - right up until that Service gets recreated and picks up a new ClusterIP, at which point the rule silently stops matching anything.
 
-To be precise, `toServices` itself is a legitimate, supported field - it's not wrong to reference a Service by name. The anti-pattern specifically is reaching for `toCIDR`/`fromCIDR` with a Service's IP baked in, instead of using the dedicated `toServices` selector, which resolves the Service dynamically and needs no IP kept in sync by hand."
-
----
-
-## Slide 19 - Anti-Pattern 13: CVE-2026-33726 - Ingress Silently Bypassed, Same-Node L7
-
-"Last one, and it's not a YAML mistake at all - it's a real, disclosed vulnerability, so I want to be precise about it: CVE-2026-33726, GitHub advisory GHSA-hxv8-4j4r-cqgv.
-
-Under a specific combination - Per-Endpoint Routing enabled, BPF Host Routing disabled - Ingress NetworkPolicies were not enforced for pod traffic to L7 Services (Envoy, GAMMA) with a local backend on the same node. No log entry, no drop event, nothing - the traffic that should have been denied by your Ingress policy just went through.
-
-Why this deserves a slide of its own: that combination isn't some obscure edge-case config - it's the *default* under several common cloud-IPAM setups. Cilium ENI mode on EKS, Azure IPAM, some GKE configurations all auto-enable Per-Endpoint Routing, meaning EKS-with-Cilium-ENI-mode is probably the single most common affected environment in the wild.
-
-Fixed versions: 1.17.14, 1.18.8, 1.19.2, and anything after. If you're running an affected version on one of those cloud-IPAM setups, this isn't a policy-authoring problem you can fix in YAML - it's a 'go check your Cilium version' problem, today, after this talk."
-
----
 
 ## Slide 20 - Debugging: How We Actually Find the Drop
 
