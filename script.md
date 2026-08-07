@@ -165,12 +165,3 @@ Always add the namespace label to every selector. Prefer `toEndpoints` over `toS
 
 "That's thirteen ways I've personally shipped a CiliumNetworkPolicy that looked correct and wasn't. Happy to take questions - and if you want the deeper writeup, `docs.cilium.io/security/policy` is the canonical reference, and `editor.networkpolicy.io` is a genuinely useful visual editor if you're prototyping a policy before committing it to a chart."
 
----
-
-## Q&A prep - things that might come up but aren't on any slide
-
-- **"Does the `k8s:` prefix matter?"** No, in the vast majority of real clusters - it defaults to `any:` if omitted, which matches all sources. Only matters if you're disambiguating label sources (e.g., container-runtime labels vs. Kubernetes labels).
-- **"How do I check what identity a pod actually has?"** `kubectl get cep -n <ns> <pod> -o jsonpath='{.status.identity.labels}' | jq`
-- **"What's the full list of labels Cilium excludes from identity?"** Point to Cilium's "Limiting Identity-Relevant Labels" doc - don't try to recite it from memory.
-- **"Does my pod even need kube-apiserver egress?"** Only if something inside the pod is making live API calls at runtime (client-go, kubectl, an SDK). Mounted ConfigMaps/Secrets and env-var injection are handled by kubelet on the pod's behalf - no egress rule needed for those.
-- **"Is `toServices` just wrong, then?"** No - it's a legitimate field for the cases it's built for. The anti-pattern is specifically hardcoding a ClusterIP into `toCIDR` instead of using it, and separately, expecting `toServices` alone to authorize pod-to-pod traffic after DNAT.
