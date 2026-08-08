@@ -134,22 +134,17 @@ Practical incident-response takeaway: if you need a hard, immediate cut, don't r
 
 ### Anti-Pattern 8: Death by a Thousand NetPols
 
+now this isn't a technical bug. It's an organizational iisue, and you can't fix it with better manifests.
 
-This is the one I feel most strongly about, because it isn't a mechanism bug. It's an organizational one, and you can't fix it with better YAML.
+your namespaces would not be one app per namespace. A shared namespace like `checkout` might run multiple services. Every service owner would add or update their own CiliumNetworkPolicy whenever they need a new path open. there is no shared owner, no central place where your netpols live - its scattered across projects or helm charts. nothing forces them to coordinate, because policies only ever compose additively. nothing breaks for now,  keep piling up.
 
-Real namespaces aren't one app per namespace. A shared namespace like `checkout` might run multiple services. Every service owner bolts on their own CiliumNetworkPolicy whenever they need a new path open. No shared owner, no central review, and nothing forces them to coordinate, because policies only ever compose additively. Nobody's rule technically conflicts with anyone else's. They just keep piling up.
+but when something breaks, you have a pile of netpols in what not places and debugging is very difficult - becuase you know what traffic is blolcked - via hubble - you cant find the netpols or in some cases set of netpols causeing that. because the effective policy is the union of every rule from every policy that happens to select it.
 
-Then something breaks and debugging stops being "read the policy." It becomes "grep every CNP that selects this namespace and hope you find the one that's wrong." You can't reason about a pod's effective policy from any single file, because the effective policy is the union of every rule from every policy that happens to select it.
+The fix is centralizing policy under one place. but then theres another trap - If you generate a policy per app and each of those includes its own default-deny, you get several default-denies in a namespace, each written from the perspective of one app, each unaware of the others. That causes another problem.
 
-The fix is centralizing policy authoring under one roof. Thats one of the reasons why KubeAid-Addons is one centralized helm chart for all network policies we have (infact we have centralized our operator configs as well). So for us and our open source users, network policies for all addons live in one chart, so it can be easily read and  and get rendered conditionally per namespace, one targeted policy per app.
+- So this is how we fix this with our netpols, we have a centralized helm chart called KubeAid Addons , this is the place for all network policies we have (infact we have centralized our operator configs as well). For us and our open source users, so now network policies for all apps live in one chart, so it can be easily read, understood, debuggged or given to claude to debug, and these netpols rendered conditionally per namespace, one targeted policy per app. We make have put the netpols as a dependency chart while the default deny sits as part of main chart so that we can have one targeted policy per app, and exactly one default-deny per namespace - and thats the rule to follow. 
 
-But naive centralization has its own trap, If you generate a policy per app and each of those includes its own default-deny, you get several default-denies in a namespace, each written from the perspective of one app, each unaware of the others. That causes another problem.
-
-![KubeAid Addons Architecture](kubeaid-addons.png)
-
-So the rule we follow is: **one targeted policy per app, and exactly one default-deny per namespace, never one per app.** The default-deny is a namespace-level concern. The app policies only ever add allows on top of it. Thats what we do in KubeAid-Addons. If you are firewalllling your applications and want an open source solution that can centrally store your cilium network policies - you can check out [KubeAid](https://github.com/Obmondo/KubeAid) and [KubeAid-Addons](https://github.com/Obmondo/KubeAid/tree/master/argocd-helm-charts/KubeAid-addons) and if you do that - please do give us your feedback over github issues - we would love to hear back. If you're doing this in your own clusters and hit something that isn't on this list, we'd like to hear about it on our github.
-
-
+- so if a application level firewalling that is centralized and follows best pratices and avoids the mistakes we listed - you can checkout kubeaid-adons its open sourced and have firewalls for good number of open source applications SREs and platform engineers use. otherwise you can always follow all the rules I mentioned, or if you want to write it yourself you can at least refer those netpols - maybe copy paste if the netpols you need are already there. 
 
 ## Slide 20 - Debugging: How We Actually Find the Drop
 
