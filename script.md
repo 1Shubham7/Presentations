@@ -67,19 +67,15 @@ Also you should always prefer toEndpoints on a stable label - then you can sides
 
 Cilium ignores "unique per Pod" or "unique per deployment revision" labels for identity - so while using selectors - dont use such labels. Cilium maintains this list of label patterns excluded from identity computation - this done to prevent every single Pod from getting its own unique identity - for eg. if there are 2 pods in a deployment - and cilium were to consider unique per pod labels nw if we allow ingress to that deployment - the label we use in "toEndpoints matchLabels" may match will one pod but not with another - which would defeat the purpose of identity-based policy grouping. If you write a CiliumNetworkPolicy selector against one of these excluded labels, it silently matches nothing. you can scan this QR to checkout the list of excluded labels. and you can also configure your cilium to append labels to it for your specific cluster.
 
-## 4: toFQDNs Without a DNS Proxy Rule (wip)
+## 4: toFQDNs Without a DNS Proxy Rule
 
-client-1 wants to visit api.telegram.org. First step, always: it has to do a DNS lookup — ask "what IP is api.telegram.org?"
-This DNS lookup is itself just network traffic — a request going out on port 53, to CoreDNS.
-Before this traffic leaves client-1's veth, eBPF checks: does any policy that selects client-1 have a rules.dns block covering this traffic? In our correct case — yes, it does.
-Because that check passed, eBPF redirects this specific DNS query into Cilium's DNS proxy (instead of just letting it go straight to CoreDNS untouched).
-The DNS proxy forwards the query to CoreDNS, gets the real answer back (api.telegram.org = 1.2.3.4), and — because it's sitting in the middle of this conversation — it sees this answer.
-The DNS proxy records this: 1.2.3.4 is api.telegram.org, and updates a shared table Cilium keeps for the whole node/cluster (we'll call this "the big lookup table" for now — more on it in a second).
-client-1 receives the DNS answer normally, now tries to actually connect to 1.2.3.4.
-eBPF checks the policy: client-1 has a toFQDNs: api.telegram.org rule. Cilium checks the big lookup table: "is 1.2.3.4 labeled as api.telegram.org?" — yes, because step 6 just wrote that in.
-Allowed. Connection proceeds.
+Pod does a DNS lookup for example.org.
+eBPF checks: does any policy selecting this Pod's egress on port 53 have a rules.dns block? — doesn't matter which policy object, as long as it actually applies to this Pod.
+If yes: DNS proxy intercepts, forwards the query, gets the answer, records the IP → FQDN mapping.
+Pod tries to connect to the resolved IP.
+eBPF checks: does any policy selecting this Pod's egress have a toFQDNs rule matching example.org?
+If yes: allowed. Connection proceeds.
 
-Watching a DNS lookup (so Cilium learns the IP) only happens for a Pod if that Pod's own policy has the DNS rule. But once any Pod's lookup gets watched and written to the shared table, any other Pod can benefit from that entry — until it expires. That's why a missing rules.dns block doesn't fail every time — it fails only when nobody else happened to refresh that entry recently.
 
 ### Anti-Pattern 5: Default-Deny Surprises
 
