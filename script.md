@@ -69,13 +69,25 @@ Cilium ignores "unique per Pod" or "unique per deployment revision" labels for i
 
 ## 4: toFQDNs Without a DNS Proxy Rule
 
-Pod does a DNS lookup for example.org.
-eBPF checks: does any policy selecting this Pod's egress on port 53 have a rules.dns block? — doesn't matter which policy object, as long as it actually applies to this Pod.
-If yes: DNS proxy intercepts, forwards the query, gets the answer, records the IP → FQDN mapping.
-Pod tries to connect to the resolved IP.
-eBPF checks: does any policy selecting this Pod's egress have a toFQDNs rule matching example.org?
-If yes: allowed. Connection proceeds.
+The next one is to add a toFQDNs without added l7 DNS rules. If you add a FQDNs egress to your pod without a rules.dns block allowing port 53, nothing permits DNS traffic at all. What internally happens is:
 
+- pod would call a DNS lookup for example.org to CoreDNS at port 53. If you dont even allow egress to CoreDNS - this lookup never happens and your `toFQDNs` wont do anything. 
+- if you allow traffic from your pod to CoreDNS, This packet hits the Pod's veth - eBPF checks the policy: is traffic allowed to coreDNS - it directly routes it to coreDNS.
+- now this is imp, if you just wrtie a normal netpol without any l7 dns policy i.e. `rules.dns` cilium's eBPF cant do the DNS parsing itself (why ? because it can look at application level traffic only). so it will simply route it to CoreDNS and then CoreDNS answers directly back to the Pod the IP. since Cilium was never in this conversation at all, so nothing read this response, nothing got recorded anywhere. The Pod knows the IP now; Cilium does not.
+    - Pod tries to connect to 93.184.216.34:443.
+    - eBPF checks IPcache: is there a toFQDNs entry allowing this Pod to reach example.org? - No.
+    - No matching policy map entry for this IP → blocked.
+- only if you add the `rules.dns`,  it rewrites the packet's destination so that instead of going straight to CoreDNS, it goes to a local socket that the DNS proxy process is listening on, inside cilium-agent, on that same node.
+
+- So we need to add l7 dns rule in the policy, if we add that, eBPF intercepts the packet, sees a L7 policy, it rewrites the packet so the kernel delivers it to the local socket where DNS proxy process is listening on, inside cilium-agent, on this same node - instead of CoreDNS.
+- The DNS proxy process receives the packet on that socket. it reads the DNS query. The proxy now makes its own separate outbound connection to the CoreDNS, forwarding the same query on the Pod's behalf.
+- CoreDNS answers, sending the response back to the proxy. The proxy reads this response - parses it - and writes this down in two places:
+    - This Pod's own FQDN cache - "example.org → 93.184.216.34, valid until TTL expiry."
+    - The IPCache (which is a the shared, cluster wide table)
+- The proxy forwards the real DNS answer back to the Pod as well.
+- now when pod tries to connect to exmaple.com - This new packet leaves the Pod, hits the veth, same eBPF hook again. now Pod's identity allowed to reach 93.184.216.34 on port 443? Yes - Allowed.
+
+so the fix is to make sure a rules.dns block covering port 53 actually applies to every Pod that has a toFQDNs rule.
 
 ### Anti-Pattern 5: Default-Deny Surprises
 
