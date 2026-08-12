@@ -111,19 +111,6 @@ Since the policy didne explicitly allow traffic from outside cluster - it blocks
 
 ---
 
-### Anti-Pattern 6: Hardcoded Namespaces & Domains
-
-when you apply  a CiliumNetworkPolicy that selects a Pod and you havent added any policy denying traffic - it automatically converts it to default deny, unless explicitly allowed. this happens per direction - ingress and egress - independently.
-
-So never start with writing netpols for an app and just enforcing them, follow this step by step process - this always works
-
-1. write a default deny policy that blocks everything in that ns, you can use NotIn operator to ignore applications if you have multiple apps running in one ns and you only want to write netpols for one app. allow DNS egress in same netpol
-2. check if your app has probes - if yes - allow kubelet ingress
-3. check if your app needs to talk to kube-api server - to query or watch live cluster state - if yes - then allow egress to kube-apiserver
-4. If you're firewalling a resource managed by a controller or operator, check whether the operator talks directly to the workload Pod itself (not just to the Kubernetes API about it). If yes, allow ingress from the operator.
-5. then roll out in audit mode and enforce the policies.
-6. now go check your hubble it will show you what all communication your app does - and then using that write a proper netpol.
-
 ### Anti Pattern 7 - Expecting Instant Enforcement on Label Changes
 
 "Incident-response instinct: relabel a compromised or misbehaving pod - say, slap `role: quarantined` on it - expecting that to immediately sever its existing connections to sensitive backends. That's not guaranteed.
