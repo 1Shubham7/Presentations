@@ -98,7 +98,7 @@ So never start with writing netpols for an app and just enforcing them, follow t
 1. write a default deny policy that blocks everything in that ns, you can use NotIn operator to ignore applications if you have multiple apps running in one ns and you only want to write netpols for one app. allow DNS egress in same netpol
 2. check if your app has probes - if yes - allow kubelet ingress
 3. check if your app needs to talk to kube-api server - to query or watch live cluster state - if yes - then allow egress to kube-apiserver
-4. If you're firewalling a resource managed by a controller or operator, check whether the operator talks directly to the workload Pod itself (not just to the Kubernetes API about it). If yes, allow ingress from the operator.
+4. If you're firewalling a resource managed by a controller or operator, check whether the operator talks directly to the workload Pod itself (not just to the Kubernetes API about it). If yes, allow ingress from the operator. In our case, someone didnt not add ingress from cnpg operator for a cnpg pod, now it was working fine, but then month or two later when cnpg pod was restarted - it could work - thats because cnpg operator talks to the cnpg pod at the startup - so these mistakes remain hindden sommetimes, thats one more good reason to be careful while writing netpols, and not just asking claude to one shot it, infact claude from our experience makes a lot of mistakes for network pollicies.
 5. then roll out in audit mode and enforce the policies.
 6. now go check your hubble it will show you what all communication your app does - and then using that write a proper netpol.
 
