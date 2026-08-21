@@ -20,7 +20,7 @@ So I would assume most of us here know what Cilium is, for those who havent hear
 
 Since its based on eBPF - programs run directly in the Linux kernel on every packet, replacing linear iptables rule chains with O(1) hash lookups.
 
-It has Identity-Based Network Security - so policies are enforced on workload identity.
+It has Identity-Based Network Security.
 
 and because it is inspecting every packet at the kernel level to route and secure it, it gives us a lot of visibility on those packets and then you can use Hubble to export those flow data as logs, metrics, and a UI, without any extra instrumentation.
 
